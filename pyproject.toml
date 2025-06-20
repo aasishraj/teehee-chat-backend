@@ -11,5 +11,6 @@ dependencies = [
     "passlib>=1.7.4",
     "pydantic-settings>=2.9.1",
     "python-jose>=3.5.0",
+    "requests>=2.32.4",
     "sqlalchemy>=2.0.41",
 ]
