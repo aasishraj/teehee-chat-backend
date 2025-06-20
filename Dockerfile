@@ -8,14 +8,11 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy project files
-COPY pyproject.toml ./
-COPY README.md ./
-
-# Install UV package manager
-RUN pip install uv
+COPY requirements.txt ./
+COPY .env ./
 
 # Install dependencies
-RUN uv pip install --system -e .
+RUN pip install -r requirements.txt --no-cache-dir
 
 # Copy application code
 COPY ./app ./app
