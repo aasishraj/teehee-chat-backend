@@ -4,12 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+import requests
 from app.db.database import get_db
 from app.db.models import User
-from app.db.schemas import UserCreate, UserLogin, User as UserSchema, Token
+from app.db.schemas import UserCreate, User as UserSchema, Token
 from app.core.security import (
-    verify_password,
-    get_password_hash,
     create_access_token,
     verify_token
 )
@@ -17,6 +16,29 @@ from app.core.config import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 security = HTTPBearer()
+
+
+def verify_google_token(token: str) -> dict:
+    """Verify Google ID token and return user info."""
+    try:
+        response = requests.get(f"https://oauth2.googleapis.com/tokeninfo?id_token={token}")
+        response.raise_for_status()
+        idinfo = response.json()
+
+        # Check for error in response
+        if "error" in idinfo:
+            raise ValueError(f"Token validation error: {idinfo['error']}")
+
+        # Verify the token is for our application
+        if settings.google_client_id and idinfo.get("aud") != settings.google_client_id:
+            raise ValueError("Unrecognized client ID")
+            
+        return idinfo
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid Google token: {str(e)}"
+        )
 
 
 async def get_current_user(
@@ -57,7 +79,7 @@ async def get_current_user(
 
 @router.post("/signup", response_model=Token)
 async def signup(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
-    """Create a new user account."""
+    """Create a new user account with SSO only."""
     
     # Check if user already exists
     result = await db.execute(select(User).where(User.email == user_data.email))
@@ -69,19 +91,19 @@ async def signup(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
             detail="Email already registered"
         )
     
+    # Only allow SSO signup
+    if not user_data.sso_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SSO ID is required for signup"
+        )
+    
     # Create new user
     user = User(
         email=user_data.email,
         sso_id=user_data.sso_id,
-        password_hash=get_password_hash(user_data.password) if user_data.password else None
+        password_hash=None
     )
-    
-    # Validate that either password or sso_id is provided
-    if not user_data.password and not user_data.sso_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Either password or SSO ID must be provided"
-        )
     
     db.add(user)
     await db.commit()
@@ -96,66 +118,57 @@ async def signup(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@router.post("/signin", response_model=Token)
-async def signin(user_credentials: UserLogin, db: AsyncSession = Depends(get_db)):
-    """Authenticate user with email and password."""
+@router.post("/google-sso", response_model=Token)
+async def google_sso_login(sso_data: dict, db: AsyncSession = Depends(get_db)):
+    """Handle Google SSO login/signup."""
     
-    # Find user by email
-    result = await db.execute(select(User).where(User.email == user_credentials.email))
-    user = result.scalar_one_or_none()
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password"
-        )
-    
-    # Verify password
-    if not user.password_hash or not verify_password(user_credentials.password, user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password"
-        )
-    
-    # Create access token
-    access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
-    access_token = create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
-    )
-    
-    return {"access_token": access_token, "token_type": "bearer"}
-
-
-@router.post("/sso", response_model=Token)
-async def sso_login(sso_data: dict, db: AsyncSession = Depends(get_db)):
-    """Handle SSO login/signup."""
-    
-    # Extract SSO data (this would be customized based on your SSO provider)
-    sso_id = sso_data.get("sso_id")
-    email = sso_data.get("email")
-    
-    if not sso_id or not email:
+    # Extract Google ID token from request
+    google_token = sso_data.get("token")
+    if not google_token:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="SSO ID and email are required"
+            detail="Google token is required"
         )
     
-    # Try to find existing user
+    # Verify Google token and extract user info
+    try:
+        google_user_info = verify_google_token(google_token)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Failed to verify Google token: {str(e)}"
+        )
+    
+    # Extract user information from Google token
+    email = google_user_info.get("email")
+    google_user_id = google_user_info.get("sub")  # Google's unique user ID
+    name = google_user_info.get("name")
+    
+    if not email or not google_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email and user ID are required from Google token"
+        )
+    
+    # Try to find existing user by email or Google user ID
     result = await db.execute(
-        select(User).where((User.sso_id == sso_id) | (User.email == email))
+        select(User).where((User.sso_id == google_user_id) | (User.email == email))
     )
     user = result.scalar_one_or_none()
     
     if user:
-        # Update SSO ID if needed
+        # Update SSO ID if needed (in case user was created with email but no SSO ID)
         if not user.sso_id:
-            user.sso_id = sso_id
+            user.sso_id = google_user_id
             await db.commit()
     else:
         # Create new user
+        print(f"Creating new user: {email} with SSO ID: {google_user_id}")
         user = User(
             email=email,
-            sso_id=sso_id,
+            sso_id=google_user_id,
             password_hash=None
         )
         db.add(user)
