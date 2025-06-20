@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     
+    # Google OAuth
+    google_client_id: Optional[str] = None
+    
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8080"]
     
