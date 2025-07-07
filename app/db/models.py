@@ -18,7 +18,7 @@ class User(Base):
     # Relationships
     provider_keys = relationship("ProviderKey", back_populates="user", cascade="all, delete-orphan")
     chat_sessions = relationship("ChatSession", back_populates="user", cascade="all, delete-orphan")
-    created_branches = relationship("Branch", back_populates="created_by_user")
+    created_branches = relationship("Branch", back_populates="created_by_user" )
 
 
 class ProviderKey(Base):
@@ -63,7 +63,7 @@ class Message(Base):
     provider = Column(String, nullable=True)  # Provider used for assistant messages
     
     # Relationships
-    chat_session = relationship("ChatSession", back_populates="messages")
+    chat_session = relationship("ChatSession", back_populates="messages", foreign_keys=[chat_session_id])
     parent = relationship("Message", remote_side=[id])
     children = relationship("Message", back_populates="parent")
     base_branches = relationship("Branch", back_populates="base_message")
