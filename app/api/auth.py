@@ -77,47 +77,6 @@ async def get_current_user(
     return user
 
 
-@router.post("/signup", response_model=Token)
-async def signup(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
-    """Create a new user account with SSO only."""
-    
-    # Check if user already exists
-    result = await db.execute(select(User).where(User.email == user_data.email))
-    existing_user = result.scalar_one_or_none()
-    
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-    
-    # Only allow SSO signup
-    if not user_data.sso_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="SSO ID is required for signup"
-        )
-    
-    # Create new user
-    user = User(
-        email=user_data.email,
-        sso_id=user_data.sso_id,
-        password_hash=None
-    )
-    
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
-    
-    # Create access token
-    access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
-    access_token = create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
-    )
-    
-    return {"access_token": access_token, "token_type": "bearer"}
-
-
 @router.post("/google-sso", response_model=Token)
 async def google_sso_login(sso_data: dict, db: AsyncSession = Depends(get_db)):
     """Handle Google SSO login/signup."""

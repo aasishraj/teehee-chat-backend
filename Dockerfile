@@ -9,7 +9,6 @@ RUN apt-get update && apt-get install -y \
 
 # Copy project files
 COPY requirements.txt ./
-COPY .env ./
 
 # Install dependencies
 RUN pip install -r requirements.txt --no-cache-dir

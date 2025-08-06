@@ -5,10 +5,8 @@ services:
       - "8000:8000"
     depends_on:
       - db
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/chatdb
-      - SECRET_KEY=your-secret-key-change-in-production
-      - ENCRYPTION_KEY=your-encryption-key-change-in-production
+    env_file:
+      - .env
     volumes:
       - ./app:/app/app
     restart: unless-stopped
